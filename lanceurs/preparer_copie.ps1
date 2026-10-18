@@ -78,4 +78,4 @@ $size = (Get-ChildItem -LiteralPath $target -Recurse -File | Measure-Object Leng
 Write-Host ""
 Write-Host ("Copie prete : {0} ({1:N0} Mo)" -f $target, $size) -ForegroundColor Green
 Write-Host "Chez le collegue : ouvrir ce dossier dans VS Code, puis Ctrl+Maj+B."
-Write-Host "Ou double-cliquer sur Lancer.cmd. Il faut Python 3.10 a 3.13 installe."
+Write-Host "Ou double-cliquer sur Lancer.cmd. Il faut Python 3.12 ou 3.13 installe."

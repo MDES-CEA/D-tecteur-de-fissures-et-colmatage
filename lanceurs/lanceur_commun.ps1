@@ -20,14 +20,15 @@ function Test-PythonEnvironment([string] $python) {
 
 
 function Find-BasePython {
-    # Python 64 bits, de 3.10 a 3.13 ; 3.12 de preference, la version du
-    # poste d'origine. Sans guillemets dans le code passe a Python : Windows
-    # PowerShell 5.1 les mutile en route.
+    # Python 64 bits, 3.12 ou 3.13 ; 3.12 de preference, la version du poste
+    # d'origine. Les versions imposees (numpy 2.5…) n'existent pas pour 3.10
+    # et 3.11 : l'installation y echouerait a mi-chemin. Sans guillemets dans
+    # le code passe a Python : Windows PowerShell 5.1 les mutile en route.
     $ErrorActionPreference = "Continue"
-    $probe = "import sys; print(sys.executable if (3,10) <= sys.version_info[:2] <= (3,13) and sys.maxsize > 2**32 else 0)"
+    $probe = "import sys; print(sys.executable if (3,12) <= sys.version_info[:2] <= (3,13) and sys.maxsize > 2**32 else 0)"
     $candidates = @()
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        foreach ($version in "3.12", "3.13", "3.11", "3.10") { $candidates += , @("py", "-$version") }
+        foreach ($version in "3.12", "3.13") { $candidates += , @("py", "-$version") }
     }
     if (Get-Command python -ErrorAction SilentlyContinue) { $candidates += , @("python") }
     foreach ($candidate in $candidates) {
@@ -78,7 +79,7 @@ function Get-ProjectPython([string] $ProjectDirectory) {
     if (-not (Test-Path -LiteralPath $venvPython)) {
         $basePython = Find-BasePython
         if (-not $basePython) {
-            throw ("Aucun Python 64 bits de 3.10 a 3.13 sur ce poste.`n" +
+            throw ("Aucun Python 64 bits 3.12 ou 3.13 sur ce poste.`n" +
                    "Installer Python 3.12 (python.org, ou le catalogue logiciel du poste), puis relancer.")
         }
         Write-Host ""
