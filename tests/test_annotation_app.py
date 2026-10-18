@@ -3,6 +3,7 @@
 import importlib.util
 import math
 import unittest
+from threading import RLock
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -372,6 +373,8 @@ class CenterlineTests(unittest.TestCase):
     def test_routed_geometry_keeps_every_user_anchor(self):
         detector = CrackDetector.__new__(CrackDetector)
         route_map = SimpleNamespace(scale=1, cost=np.ones((100, 100), dtype=float))
+        detector._cache_lock = RLock()
+        detector._route_cache = {1: route_map}          # carte de la tuile deja prete
         detector.prepare_route = lambda _zone: route_map
         zone = {"id": 1, "x": 0, "y": 0, "width": 100, "height": 100}
         anchors = [[10.25, 10.5], [50.75, 20.25], [80.5, 80.75]]

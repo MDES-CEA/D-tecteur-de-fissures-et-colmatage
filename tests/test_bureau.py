@@ -107,6 +107,48 @@ class DesktopWindowTests(unittest.TestCase):
         result = self.session.report(validated_only=True)
         self.assertAlmostEqual(result["length_px"]["filled"], crack["length_px"], delta=2)
 
+    def test_whole_tile_accept_and_delete_then_undo(self):
+        window, session = self.window, self.session
+        zone = session.zones()[0]
+        database, image_id = session.database, session.image_id
+
+        def crack(y, category="unclassified"):
+            line = [[zone["x"] + 100, zone["y"] + y], [zone["x"] + 600, zone["y"] + y]]
+            created = database.create_crack(image_id, zone["id"], line, line, "test")
+            if category != "unclassified":
+                created = database.update_crack(image_id, created["id"], created["revision"], line, line,
+                                                category, "proposed", "test")
+            return created
+
+        suggested, classified, bare = crack(100), crack(200, "filled"), crack(300)
+        database.set_suggestion(suggested["id"], suggested["revision"], "reopened", 0.8)
+        window.reload()
+        window.select_zone(zone["id"])
+        self.idle()
+
+        def states():
+            return {c["id"]: (c["category"], c["state"]) for c in session.cracks(zone["id"], include_rejected=True)
+                    if c["id"] in (suggested["id"], classified["id"], bare["id"])}
+
+        before = states()
+        window.act_accept_zone.trigger()
+        self.idle()
+        after = states()
+        self.assertEqual(after[suggested["id"]], ("reopened", "validated"))   # la suggestion est prise
+        self.assertEqual(after[classified["id"]], ("filled", "validated"))    # sa categorie est gardee
+        self.assertEqual(after[bare["id"]], ("unclassified", "proposed"))     # rien a accepter
+        window.undo()
+        self.idle()
+        self.assertEqual(states(), before)
+
+        window.act_delete_zone.trigger()
+        self.idle()
+        self.assertTrue(all(state == "rejected" for _, state in states().values()))
+        self.assertIn("Ctrl+Z", window.message.text())
+        window.undo()
+        self.idle()
+        self.assertEqual(states(), before)
+
     def test_cut_a_crack_and_undo(self):
         window = self.window
         window.set_mode("draw")
