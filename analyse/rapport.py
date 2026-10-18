@@ -1,8 +1,7 @@
-"""Rapport PDF d'une analyse automatique : le resultat, sa fiabilite, la carte, les tuiles, des exemples.
+"""Rapport PDF d'une analyse automatique : le resultat, la carte, les tuiles, des exemples.
 
-Ecrit pour etre compris d'un coup d'oeil, sans connaitre la methode : la
-premiere page dit le resultat, puis si l'on peut s'y fier et comment le
-verifier. Les details techniques restent dans `resultat.json` et le journal.
+Ecrit pour etre compris d'un coup d'oeil, sans connaitre la methode. Les
+details techniques restent dans `resultat.json` et le journal.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import numpy as np
 COLORS = {"open": "#d43d2f", "filled": "#0a5a8f", "reopened": "#2fb5a0"}
 LABELS = {"open": "Non colmatée", "filled": "Colmatée", "reopened": "Rouverte"}
 INK, MUTED = "#1f1f1f", "#6b6b6b"
-GOOD, WARN = "#2e7d32", "#b26a00"
+WARN = "#b26a00"
 # Au-dela de cet ecart entre la resolution des fenetres de l'image et celle de
 # l'apprentissage, le classement du colmatage n'a pas ete valide.
 RESOLUTION_TOLERANCE = 1.3
@@ -70,7 +69,7 @@ def current_state(annotations, mask, pixel_um: float) -> dict | None:
 
 
 def resolution_problem(image_pixel_um, model_pixel_um) -> str | None:
-    """Phrase d'avertissement si l'image est trop grossiere pour le modele de colmatage."""
+    """Avertissement court si l'image est trop grossiere pour le modele de colmatage."""
     from .bandes import reduction_for
 
     if not image_pixel_um or not model_pixel_um:
@@ -79,95 +78,28 @@ def resolution_problem(image_pixel_um, model_pixel_um) -> str | None:
     learnt = model_pixel_um * reduction_for(model_pixel_um)
     if seen <= learnt * RESOLUTION_TOLERANCE:
         return None
-    return (f"Image trop grossière pour le classement du colmatage : {_num(image_pixel_um, 2)} µm par pixel, "
-            f"le modèle a appris sur des images à {_num(model_pixel_um, 2)} µm. Les parts colmatées de ce "
-            f"rapport ne sont pas fiables.")
+    return (f"⚠ Non fiable : image à {_num(image_pixel_um, 2)} µm par pixel, "
+            f"modèle appris à {_num(model_pixel_um, 2)} µm")
 
 
-def _checks(result, summary, current, evaluation, audit, ratios, resolution) -> list[tuple[str, str]]:
-    """Les lignes « Peut-on s'y fier ? » : (signe, texte). Le signe dit si c'est rassurant."""
-    from .evaluation import corrected
-
-    lines = []
-    if resolution:
-        lines.append(("⚠", resolution))
-    if evaluation and evaluation.get("tuiles"):
-        here = "cette mosaïque" in evaluation.get("source", "")
-        # Mesure jointe aux modeles, faite sur cette meme mosaique (annotations supprimees depuis).
-        same = not here and evaluation.get("mosaique") == result.get("image")
-        auto, human = evaluation["part_colmatee_auto"], evaluation["part_colmatee_humaine"]
-        gap = round(100 * (auto - human))
-        verdict = ("elle tombe juste" if abs(gap) < 3 else
-                   f"elle {'sous-estime' if gap < 0 else 'surestime'} d'environ {abs(gap)} points")
-        if here:
-            head = (f"Vérifiée sur {evaluation['tuiles']} tuiles de cette mosaïque, annotées à la main et jamais "
-                    f"vues par la machine :")
-        else:
-            # La mesure jointe aux modeles : faite a leur apprentissage.
-            when = f" le {_date(evaluation['mesure_le'])[:10]}" if evaluation.get("mesure_le") else ""
-            place = ("de cette mosaïque (annotations retirées depuis)" if same
-                     else f"d'une autre mosaïque (« {evaluation.get('mosaique', '?')} »)")
-            head = (f"Mesure faite{when}, à l'apprentissage du modèle, sur {evaluation['tuiles']} tuiles {place} "
-                    f"annotées à la main et jamais vues par la machine :")
-        lines.append(("✓" if here or same else "⚠", head))
-        lines.append(("", f"– elle trouvait {_pct(evaluation['detection_rappel'])} des fissures tracées "
-                          f"(elle en ratait {_pct(1 - evaluation['detection_rappel'])}) ;" if not here else
-                          f"– elle trouve {_pct(evaluation['detection_rappel'])} des fissures tracées "
-                          f"(elle en rate {_pct(1 - evaluation['detection_rappel'])}) ;"))
-        lines.append(("", f"– {_pct(1 - evaluation['detection_precision'])} de ce qu'elle trace n'est pas "
-                          f"une fissure ;"))
-        lines.append(("", f"– part colmatée : {_pct(auto)} pour elle, {_pct(human)} à la main : {verdict}."))
-        if not here and not same:
-            lines.append(("•", "Pour vérifier sur celle-ci : valider entièrement quelques tuiles des lignes "
-                               "de test, puis relancer l'analyse."))
-    else:
-        lines.append(("⚠", "Jamais comparée à vos annotations : valider quelques tuiles de test, puis "
-                           "relancer l'analyse."))
-    if ratios and not resolution:
-        if current:
-            # Les tuiles verifiees comptent telles quelles ; les autres sont corrigees.
-            rest = {c: summary["longueur_mm"][c] - current["par_etat_verifie_mm"][c] for c in COLORS}
-            fixed = corrected(rest, ratios)["longueur_mm"]
-            total = {c: current["par_etat_verifie_mm"][c] + fixed[c] for c in COLORS}
-            share = (total["filled"] + total["reopened"]) / max(1e-9, sum(total.values()))
-        else:
-            share = corrected(summary["longueur_mm"], ratios)["part_colmatee"]
-        lines.append(("•", f"En corrigeant cet écart habituel avec l'annotation à la main : environ {_pct(share)} "
-                           f"colmaté."))
-    if audit and audit.get("fissures_controlees"):
-        a, b = audit["part_colmatee_corrigee_ic95"]
-        lines.append(("✓", f"Sondage de {audit['points']} points : vous et la machine êtes d'accord sur "
-                           f"« colmatée ou non » dans {_pct(audit['accord_colmatee_oui_non'])} des cas ; "
-                           f"{_pct(audit['pas_une_fissure'])} des points n'étaient pas des fissures. Part "
-                           f"colmatée d'après le sondage : {_pct(audit['part_colmatee_corrigee'])} "
-                           f"(entre {_pct(a)} et {_pct(b)})."))
-    else:
-        lines.append(("•", "Sondage pas encore fait (Automatique > Contrôler l'analyse) : c'est la "
-                           "vérification la plus sûre, une touche par point."))
-    return lines
-
-
-def _summary_page(figure, result, summary, raw, current, checks, unreliable: bool) -> None:
-    """Page 1 : le resultat en grand, le detail par etat, puis la fiabilite."""
+def _summary_page(figure, result, summary, raw, current, warning: str | None) -> None:
+    """Page 1 : le resultat en grand et le detail par etat."""
     name = Path(result.get("image_path") or result["image"]).name
     figure.text(0.08, 0.955, name, fontsize=17, weight="bold", color=INK)
     figure.text(0.08, 0.932, f"Analyse automatique du {_date(result.get('analyse_le'))}", fontsize=10,
                 color=MUTED)
 
     share = summary["part_colmatee"]
-    figure.text(0.08, 0.845, _pct(share), fontsize=46, weight="bold", color=MUTED if unreliable else INK)
+    figure.text(0.08, 0.845, _pct(share), fontsize=46, weight="bold", color=MUTED if warning else INK)
     figure.text(0.36, 0.875, "de la longueur des fissures\nest colmatée (colmatée ou rouverte)",
                 fontsize=12.5, color=INK, va="center", linespacing=1.4)
-    if unreliable:
-        figure.text(0.36, 0.835, "⚠ Non fiable sur cette image : voir plus bas", fontsize=10.5, color=WARN,
-                    weight="bold", va="center")
+    if warning:
+        figure.text(0.36, 0.835, warning, fontsize=10.5, color=WARN, weight="bold", va="center")
     low, high = summary["part_colmatee_ic95_tuiles"]
     note = f"Selon les zones de l'échantillon : entre {_pct(low)} et {_pct(high)}." if low is not None else ""
     if current and current["tuiles_validees"]:
         note += (f"\nAvec vos corrections ({current['tuiles_validees']} tuiles validées sur {current['tuiles']}) ; "
                  f"avant elles, la machine donnait {_pct(raw['part_colmatee'])}.")
-    else:
-        note += "\nRésultat de la machine seule : aucune tuile vérifiée."
     figure.text(0.08, 0.80, note, fontsize=10, color=MUTED, va="top", linespacing=1.5)
 
     # Barre : la longueur totale, partagee par etat (un blanc entre les morceaux).
@@ -201,17 +133,6 @@ def _summary_page(figure, result, summary, raw, current, checks, unreliable: boo
                                      f"{_num(summary['densite_mm_par_mm2'], 2)} mm de fissure par mm².",
                     fontsize=10, color=MUTED, va="center")
 
-    figure.text(0.08, 0.455, "Peut-on s'y fier ?", fontsize=13, weight="bold", color=INK)
-    y = 0.42
-    for index, (sign, text) in enumerate(checks):
-        color = {"✓": GOOD, "⚠": WARN}.get(sign, MUTED)
-        if index and sign:                         # une nouvelle rubrique ; "" : suite de la precedente
-            y -= 0.016
-        figure.text(0.08, y, sign, fontsize=12, color=color, va="top", weight="bold")
-        wrapped = _wrap(text, 92 if sign or not text.startswith("–") else 88)
-        figure.text(0.11 if sign else 0.125, y, wrapped, fontsize=10, color=INK, va="top", linespacing=1.45)
-        y -= 0.022 * (wrapped.count("\n") + 1)
-
     figure.text(0.08, 0.04, "Bords de l'échantillon et petits traits isolés (moins de 50 µm) exclus. L'état est "
                             "relevé tous les 10 µm le long de chaque fissure.", fontsize=8, color=MUTED)
 
@@ -221,13 +142,8 @@ def _square(figure, x, y, color):
     return Rectangle((x, y), 0.016, 0.012, transform=figure.transFigure, color=color, figure=figure)
 
 
-def _wrap(text: str, width: int) -> str:
-    import textwrap
-    return "\n".join(textwrap.wrap(text, width))
-
-
-def build(result: dict, annotations, source, mask, out_path: Path, evaluation: dict | None = None,
-          audit: dict | None = None, current: dict | None = None, model_pixel_um: float | None = None) -> Path:
+def build(result: dict, annotations, source, mask, out_path: Path, current: dict | None = None,
+          model_pixel_um: float | None = None) -> Path:
     import matplotlib
     matplotlib.use("Agg")
     from matplotlib.backends.backend_pdf import PdfPages
@@ -239,15 +155,12 @@ def build(result: dict, annotations, source, mask, out_path: Path, evaluation: d
     summary = current["resume"] if current else raw
     pixel_um = result["pixel_um"]
     segments = current["segments"] if current else result["segments"]
-    ratios = (evaluation or {}).get("ratios")
     model_pixel_um = model_pixel_um or (result.get("colmatage") or {}).get("pixel_um")
-    resolution = resolution_problem(pixel_um, model_pixel_um)
     page = (8.27, 11.69)
     with PdfPages(out_path) as pdf:
-        # 1. Le resultat et sa fiabilite
+        # 1. Le resultat
         figure = Figure(figsize=page)
-        _summary_page(figure, result, summary, raw, current,
-                      _checks(result, summary, current, evaluation, audit, ratios, resolution), bool(resolution))
+        _summary_page(figure, result, summary, raw, current, resolution_problem(pixel_um, model_pixel_um))
         pdf.savefig(figure)
 
         # 2. La carte
@@ -342,14 +255,13 @@ def build(result: dict, annotations, source, mask, out_path: Path, evaluation: d
 
 
 def build_for(annotations, result=None) -> Path:
-    """Rapport du dernier resultat, avec evaluation et sondage s'ils existent."""
+    """Rapport du dernier resultat, avec vos corrections s'il a ete importe."""
     from annotation_app.echelle import pixel_size_um
     from annotation_app.paths import MODELS_DIR
     from crop_roi import LargeGrayImage
 
     from . import chaine
     from .apprentissage import MODEL_PATH_NAME
-    from .audit import Audit
     from .classement import ColmatageModel
     from .masque import SampleMask
 
@@ -357,14 +269,9 @@ def build_for(annotations, result=None) -> Path:
     out = annotations.output_dir()
     source = LargeGrayImage(annotations.image_path)
     mask = SampleMask.load_or_compute(annotations.image_path, source, pixel_size_um(annotations.image_path), out)
-    from .evaluation import validation_for
-    evaluation = validation_for(out)
-    audit_path = out / "audit.json"
-    audit = Audit(audit_path, result).estimate() if audit_path.exists() else None
     current = current_state(annotations, mask, result["pixel_um"])
     model_pixel_um = (result.get("colmatage") or {}).get("pixel_um")
     if model_pixel_um is None:               # resultat d'avant l'enregistrement de ce pixel
         model = ColmatageModel.load(MODELS_DIR / MODEL_PATH_NAME)
         model_pixel_um = model.pixel_um if model is not None else None
-    return build(result, annotations, source, mask, out / "rapport.pdf", evaluation, audit, current,
-                 model_pixel_um)
+    return build(result, annotations, source, mask, out / "rapport.pdf", current, model_pixel_um)
