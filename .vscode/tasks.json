@@ -1,0 +1,47 @@
+{
+    // Ouvrir CE dossier dans VS Code (Fichier > Ouvrir le dossier), puis :
+    //   Ctrl+Maj+B                        lance l'application
+    //   Terminal > Executer la tache...   les autres actions
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Fissures : lancer l'application",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\lanceurs\\lancer.ps1"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": { "kind": "build", "isDefault": true },
+            "presentation": { "panel": "dedicated", "reveal": "always", "focus": true },
+            "problemMatcher": []
+        },
+        {
+            "label": "Fissures : choisir une autre image",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\lanceurs\\lancer.ps1", "-Choisir"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "presentation": { "panel": "dedicated", "reveal": "always", "focus": true },
+            "problemMatcher": []
+        },
+        {
+            "label": "Fissures : réentraîner le détecteur de fissures",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\lanceurs\\entrainer_detecteur.ps1"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "presentation": { "panel": "dedicated", "reveal": "always", "focus": true },
+            "problemMatcher": []
+        },
+        {
+            "label": "Fissures : lancer les tests",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-Command",
+                     "$py = if (Test-Path .venv\\Scripts\\python.exe) { '.venv\\Scripts\\python.exe' } else { '..\\.venv\\Scripts\\python.exe' }; & $py -m unittest discover -v"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "test",
+            "presentation": { "panel": "dedicated", "reveal": "always" },
+            "problemMatcher": []
+        }
+    ]
+}
