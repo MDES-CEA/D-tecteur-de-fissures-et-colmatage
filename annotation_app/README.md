@@ -160,9 +160,7 @@ commence à fusionner des fissures parallèles distinctes).
 supprimer avant d'en refaire une.
 
 Il n'y a volontairement **pas de compteur de fissures** : compter suppose de
-décider ce qui relie deux tracés (jonction, croisement, proximité), ce qui
-n'est pas vérifiable à l'œil. Un chiffre invérifiable est pire que pas de
-chiffre.
+décider ce qui relie deux tracés (jonction, croisement, proximité)
 
 ## Conservation
 
