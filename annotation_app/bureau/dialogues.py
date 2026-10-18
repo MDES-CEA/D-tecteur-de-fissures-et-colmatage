@@ -84,6 +84,7 @@ SHORTCUTS = """\
 <tr><td><b>Glisser un nœud</b></td><td>le déplacer ; <b>clic droit</b> : le retirer</td></tr>
 <tr><td><b>X</b></td><td>mode Couper : un clic coupe la fissure en deux</td></tr>
 <tr><td><b>Suppr</b></td><td>supprimer la fissure sélectionnée</td></tr>
+<tr><td><b>Ctrl+Suppr</b></td><td>supprimer toutes les fissures de la tuile</td></tr>
 <tr><td><b>Ctrl+Z</b></td><td>annuler la dernière action</td></tr>
 </table>
 <h3>Classer</h3>
@@ -94,6 +95,7 @@ SHORTCUTS = """\
 <tr><td><b>3</b> ou <b>"</b></td><td>Incertaine</td></tr>
 <tr><td><b>5</b> ou <b>(</b></td><td>Mixte</td></tr>
 <tr><td><b>Entrée</b></td><td>accepter la catégorie suggérée</td></tr>
+<tr><td><b>Maj+Entrée</b></td><td>accepter tous les classements de la tuile</td></tr>
 <tr><td><b>Ctrl+Entrée</b></td><td>valider la tuile (confirme les propositions restantes)</td></tr>
 </table>
 <h3>Afficher et mesurer</h3>
@@ -301,7 +303,12 @@ class MeasuresDialog(QDialog):
             self.show_table()
             self.refresh_figure()
 
-        self.main.run(compute, done, "Calcul des mesures…", blocking=False)
+        def failed(message):
+            if generation == self.generation:
+                self.state.setText(f"Calcul impossible : {message}")
+
+        self.main.run(compute, done, "Calcul des mesures…", blocking=False, on_failed=failed,
+                      pool=self.main.display_pool)
 
     def _length(self, value: float) -> str:
         pixel = self.result.get("pixel_um")

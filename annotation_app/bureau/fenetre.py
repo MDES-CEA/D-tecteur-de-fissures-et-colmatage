@@ -85,7 +85,11 @@ class MainWindow(QMainWindow):
         self.edits = QThreadPool(self)
         self.edits.setMaxThreadCount(1)          # les modifications, dans l'ordre
         self.background = QThreadPool(self)
-        self.background.setMaxThreadCount(2)     # preparation des tuiles, bilans
+        self.background.setMaxThreadCount(2)     # preparation des tuiles, calques
+        # L'affichage (calques, mesures) a part : derriere des preparations de
+        # tuiles (une quinzaine de secondes chacune), il attendait sans fin.
+        self.display_pool = QThreadPool(self)
+        self.display_pool.setMaxThreadCount(2)
         self._tasks: set = set()
         self.busy = False
         self.session = None
@@ -164,6 +168,11 @@ class MainWindow(QMainWindow):
         self.act_center = a("Centrer sur la tuile", self.center_zone, "T")
         self.act_validate = a("Valider la tuile", lambda: self.set_zone_status("done"), "Ctrl+Return")
         self.act_unvalidate = a("Remettre la tuile « non validée »", lambda: self.set_zone_status("todo"))
+        self.act_accept_zone = a("Accepter tous les classements de la tuile", lambda: self.change_zone_cracks("accept"),
+                                 "Shift+Return", "Chaque fissure garde sa catégorie (ou prend celle suggérée) et "
+                                 "devient validée ; la tuile, elle, n'est pas validée")
+        self.act_delete_zone = a("Supprimer toutes les fissures de la tuile", lambda: self.change_zone_cracks("reject"),
+                                 "Ctrl+Del", "Ctrl+Z pour annuler")
         self.act_grid = a("Afficher la grille des tuiles", self.refresh_zones, "G", checkable=True)
         self.act_grid.setChecked(self.settings.value("grille", "false") == "true")
 
@@ -226,6 +235,8 @@ class MainWindow(QMainWindow):
         menu.addActions([self.act_previous, self.act_next, self.act_center])
         menu.addSeparator()
         menu.addActions([self.act_validate, self.act_unvalidate])
+        menu.addSeparator()
+        menu.addActions([self.act_accept_zone, self.act_delete_zone])
 
         menu = bar.addMenu("&Automatique")
         menu.addActions([self.act_full_analysis, self.act_report, self.act_audit])
@@ -410,7 +421,7 @@ class MainWindow(QMainWindow):
         self.draft_id = None
         self.pending = None
         self.undo_stack = []
-        self.prepared = set()
+        self.preparing = set()
         self.mode = "select"
         self.act_select.setChecked(True)
         self.view.set_image(session.tiles)
@@ -518,6 +529,7 @@ class MainWindow(QMainWindow):
         if self.measures is not None:
             self.measures.close()
         self.background.clear()          # preparations de tuiles pas encore commencees
+        self.display_pool.clear()
         self.view.pool.clear()
         self.edits.waitForDone(10000)    # les modifications, elles, vont au bout
         if self.session is not None:
@@ -526,8 +538,9 @@ class MainWindow(QMainWindow):
 
     # =================================================================== Taches de fond
 
-    def run(self, function, on_done=None, busy_text: str = "Calcul…", blocking: bool = True) -> None:
-        """Execute `function` hors de l'interface ; `on_done(resultat)` ensuite."""
+    def run(self, function, on_done=None, busy_text: str = "Calcul…", blocking: bool = True,
+            on_failed=None, pool: QThreadPool | None = None) -> None:
+        """Execute `function` hors de l'interface ; `on_done(resultat)` ensuite, `on_failed(message)` en cas d'erreur."""
         if blocking and self.busy:
             self.status("Calcul en cours…", error=True)
             return
@@ -549,12 +562,14 @@ class MainWindow(QMainWindow):
         def failed(message):
             finish()
             self.status(message, error=True)
+            if on_failed is not None:
+                on_failed(message)
             if blocking:
                 self.reload()
 
         task.signals.done.connect(done)
         task.signals.failed.connect(failed)
-        (self.edits if blocking else self.background).start(task)
+        (pool or (self.edits if blocking else self.background)).start(task)
 
     def set_busy(self, busy: bool, text: str = "") -> None:
         self.busy = busy
@@ -658,11 +673,35 @@ class MainWindow(QMainWindow):
             self.refresh_layers()
         if focus:
             self.center_zone()
-        if zone_id not in self.prepared:
-            # Le premier trace dans une tuile demande de preparer son routage :
-            # on le fait des qu'elle est choisie, en fond.
-            self.prepared.add(zone_id)
-            self.run(lambda: self.session.prepare(zone_id), blocking=False)
+        self.prepare_ahead(zone_id)
+
+    def prepare_ahead(self, zone_id: int) -> None:
+        """Prepare le routage de la tuile choisie, puis de la suivante, en fond.
+
+        Le premier trace dans une tuile attend cette preparation (une quinzaine
+        de secondes a 0,37 um), les suivants non. La tuile suivante est donc
+        prete quand on y arrive par « Tuile suivante ». Le detecteur garde les
+        trois dernieres en memoire ; une tuile deja prete ne coute rien.
+        """
+        targets = [zone_id]
+        # Pas d'avance quand un calque est affiche : son calcul attendrait derriere.
+        if zone_id in self.zones_order and self.layer_kind() is None:
+            index = self.zones_order.index(zone_id)
+            targets += self.zones_order[index + 1:index + 2]
+        targets = [z for z in targets if z not in self.preparing]
+        if not targets:
+            return
+        self.preparing.update(targets)
+        session = self.session
+
+        def prepare():
+            for target in targets:               # dans l'ordre : la tuile choisie d'abord
+                session.prepare(target)
+
+        def finished(_=None):
+            self.preparing.difference_update(targets)
+
+        self.run(prepare, finished, blocking=False, on_failed=finished)
 
     def select_crack(self, crack_id: int) -> None:
         crack = self.cracks_by_id.get(crack_id)
@@ -754,7 +793,10 @@ class MainWindow(QMainWindow):
         if modifiers:
             return False
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.accept_suggestion()
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self.change_zone_cracks("accept")          # Maj+Entree : toute la tuile
+            else:
+                self.accept_suggestion()
             return True
         for category, _, digit, azerty, _ in CATEGORY_KEYS:
             if key in (digit, azerty):
@@ -975,6 +1017,11 @@ class MainWindow(QMainWindow):
             self.status("Rien à annuler.")
             return
         action = self.undo_stack.pop()
+        if action["type"] == "bulk":
+            annotator = self.annotator()
+            self.run(lambda: self.session.restore_cracks(action["previous"], annotator),
+                     lambda _: (self.reload(), self.status(f"{action['label']} annulée.")))
+            return
         if action["type"] == "zone":
             annotator = self.annotator()
 
@@ -1033,6 +1080,33 @@ class MainWindow(QMainWindow):
                         + (f" {len(confirmed)} proposition(s) confirmée(s)." if confirmed else ""))
 
         self.run(change, done)
+
+    def change_zone_cracks(self, mode: str) -> None:
+        """Toutes les fissures de la tuile : classements acceptes (« accept ») ou supprimees (« reject »)."""
+        zone = self.zones_by_id.get(self.selected_zone_id)
+        if zone is None:
+            self.status("Sélectionner d'abord une tuile.", error=True)
+            return
+        label = "Acceptation des classements" if mode == "accept" else "Suppression des fissures de la tuile"
+        annotator = self.annotator()
+        session = self.session
+
+        def done(previous):
+            if not previous:
+                self.status("Rien à changer dans cette tuile.")
+                return
+            self.undo_stack.append({"type": "bulk", "previous": previous, "label": label})
+            changed = {item["id"] for item in previous}
+            if mode == "reject":
+                if self.selected_crack_id in changed:
+                    self.selected_crack_id = None
+                if self.draft_id in changed:
+                    self.draft_id = None
+            self.reload()
+            what = "classement(s) accepté(s)" if mode == "accept" else "fissure(s) supprimée(s)"
+            self.status(f"{len(previous)} {what}. Ctrl+Z pour annuler.")
+
+        self.run(lambda: session.change_zone_cracks(zone["id"], mode, annotator), done)
 
     # =================================================================== Automatique
 
@@ -1150,13 +1224,18 @@ class MainWindow(QMainWindow):
         return [z for z in self.zones if z["id"] == self.selected_zone_id]
 
     def _ensure_layer(self) -> None:
-        """Le calque de la tuile affichee se calcule tout seul s'il manque (quelques secondes)."""
+        """Le calque de la tuile affichee se calcule tout seul s'il manque (jusqu'a une demi-minute)."""
         zone = self.zones_by_id.get(self.selected_zone_id)
-        if zone is None or self.layers_running or self.session.layer_computed(zone):
+        if zone is None:
+            computed = self.act_layer_all.isChecked() and any(self.session.layer_computed(z) for z in self.zones)
+            if not computed:
+                self.status("Cliquer sur une tuile : son calque se calcule (jusqu'à une demi-minute).")
+            return
+        if self.layers_running or self.session.layer_computed(zone):
             return
         self.session.layers.start([zone])
         self.layers_completed = 0
-        self.status(f"Calcul des calques de la tuile {zone['id']}…")
+        self.status(f"Calcul du calque de la tuile {zone['id']} (jusqu'à une demi-minute)…")
         self.poll()
 
     def refresh_layers(self) -> None:
@@ -1204,7 +1283,7 @@ class MainWindow(QMainWindow):
             self.layer_cache = cache
             self.view.set_overlays(overlays, LAYER_OPACITY)
 
-        self.run(build, done, blocking=False)
+        self.run(build, done, blocking=False, pool=self.display_pool)
 
     def poll_layers(self) -> bool:
         if self.session is None or self.session._layers is None:
