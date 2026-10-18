@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Etat propre a chaque poste : base d'annotations, cache d'analyse (plusieurs
+# Go), sauvegardes, derniere image ouverte. Les modeles, eux, sont dans
+# annotation_app/modeles/ et font partie du depot.
+annotation_app/data/
+
+# Modeles candidats (non installes) et versions remplacees par un reentrainement
+annotation_app/modeles/*_candidat.*
+annotation_app/modeles/crack_detector_unet_2*.pt
+annotation_app/modeles/anciens/
+LEGACY/modeles/
+
+# Notes de travail, gardees sur le poste : historique des essais, plan B du colmatage
+docs/TOPO_IDENTIFICATION.md
+docs/PLAN_CARTE_GEL.md
+
+# Sorties des anciens tests navigateur : profils Chrome, captures, copies de la base
+LEGACY/validation/sorties/
+.test-temp/
+
+# Mosaiques MEB : pres d'un gigaoctet piece, GitHub refuse au-dela de 100 Mo
+images/
+*.tif
+*.tiff
+*.TIF
+*.TIFF
+
+# Editeurs / OS. Sauf les taches VS Code : Ctrl+Maj+B en depend.
+.vscode/*
+!.vscode/tasks.json
+.idea/
+.DS_Store
+Thumbs.db

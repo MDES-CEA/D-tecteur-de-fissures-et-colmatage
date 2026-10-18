@@ -1,0 +1,16 @@
+PySide6-Essentials>=6.8,<7
+numpy>=2,<3
+pillow>=11,<13
+scipy>=1.16,<2
+scikit-image>=0.26,<1
+scikit-learn>=1.7,<2
+joblib>=1.5,<2
+matplotlib>=3.10,<4
+tifffile>=2025
+
+# Reperage automatique par reseau de segmentation. La version CPU suffit et
+# s'installe depuis l'index dedie :
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# L'application demarre sans : sans torch, le detecteur reprend le modele par
+# pixel `.joblib`, moins bon mais sans dependance.
+torch>=2.4

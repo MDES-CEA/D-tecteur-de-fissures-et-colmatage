@@ -1,0 +1,47 @@
+{
+  "tuiles": 18,
+  "detection_precision": 0.8978907668668809,
+  "detection_rappel": 0.8606701259620764,
+  "detection_rappel_par_categorie": {
+    "open": 0.9212648364591828,
+    "filled": 0.8149069205627398,
+    "reopened": 0.8318042813455657
+  },
+  "longueur_humaine_mm": 83.41830874814684,
+  "longueur_auto_mm": 80.40884552743624,
+  "part_colmatee_humaine": 0.5740421148871033,
+  "part_colmatee_auto": 0.48255442061577586,
+  "longueur_humaine_par_etat_mm": {
+    "open": 35.53268637405528,
+    "filled": 45.22875222465221,
+    "reopened": 2.6568701494393503
+  },
+  "longueur_auto_par_etat_mm": {
+    "open": 41.60720166156083,
+    "filled": 37.03408411970079,
+    "reopened": 1.7675597461746206
+  },
+  "ratios": {
+    "open": 0.8540032723922036,
+    "filled": 1.2212736807116598,
+    "reopened": 1.5031289070648892
+  },
+  "erreur_part_par_tuile_points": 7.833327815996297,
+  "controle_validation": {
+    "tuiles": 9,
+    "part_colmatee_humaine": 0.3441580977911155,
+    "part_colmatee_auto": 0.2942020339817136,
+    "part_colmatee_corrigee": 0.37623210461683565,
+    "longueur_humaine_mm": 45.45134409445513,
+    "longueur_auto_mm": 43.142450805272446,
+    "longueur_corrigee_mm": 41.68902435623957
+  },
+  "mosaique": "a6-2-0-entier",
+  "mesure_le": "2026-10-17T16:30:27",
+  "detecteur": {
+    "fichier": "crack_detector_unet.pt",
+    "empreinte": "5ea6c1a3795c",
+    "analyse_um": 1.595
+  },
+  "colmatage": "colmatage_reseau.pt"
+}
