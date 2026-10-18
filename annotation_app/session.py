@@ -162,6 +162,38 @@ class Session:
         """Valider une tuile confirme aussi ses propositions restantes, telles quelles."""
         return self.database.confirm_zone_cracks(self.image_id, zone_id, annotator)
 
+    def change_zone_cracks(self, zone_id: int, mode: str, annotator: str | None) -> list[dict]:
+        """Toutes les fissures d'une tuile d'un coup.
+
+        « reject » : supprimees. « accept » : classement accepte et valide — la
+        suggestion pour une fissure non classee, sa categorie sinon ; une fissure
+        non classee sans suggestion reste telle quelle. Rend l'etat d'avant de
+        chaque fissure changee, pour annuler (`restore_cracks`).
+        """
+        if mode not in ("reject", "accept"):
+            raise SessionError(f"Action inconnue : {mode}")
+        changes, previous = [], []
+        for crack in self.cracks(zone_id):
+            category, state = crack["category"], "rejected"
+            if mode == "accept":
+                if category == "unclassified" and crack.get("suggestion"):
+                    category = crack["suggestion"]["category"]
+                state = "validated"
+                if category == "unclassified" or (category, state) == (crack["category"], crack["state"]):
+                    continue
+            changes.append((crack["id"], crack["revision"], category, state))
+            previous.append({"id": crack["id"], "category": crack["category"], "state": crack["state"]})
+        self.database.set_cracks(self.image_id, changes, annotator)
+        return previous
+
+    def restore_cracks(self, previous: list[dict], annotator: str | None) -> None:
+        """Remet categorie et etat de plusieurs fissures, d'une seule ecriture (annulation)."""
+        changes = []
+        for item in previous:
+            current = self.crack(item["id"])
+            changes.append((item["id"], current["revision"], item["category"], item["state"]))
+        self.database.set_cracks(self.image_id, changes, annotator)
+
     def unconfirm_zone(self, zone_id: int, crack_ids, annotator: str | None) -> list[int]:
         return self.database.confirm_zone_cracks(self.image_id, zone_id, annotator, "validated", "proposed",
                                                  set(crack_ids))

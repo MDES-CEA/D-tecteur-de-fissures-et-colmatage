@@ -538,6 +538,15 @@ def _sample_anchors(points: list[list[int]], spacing: float = 110.0) -> list[lis
 class CrackDetector:
     """Detecteur partage par l'API, avec un petit cache pour les corrections."""
 
+    # Tant que la carte de cout de la tuile entiere n'est pas prete (une
+    # quinzaine de secondes a 0,37 um), un trace la calcule seulement autour
+    # de ses noeuds : une seconde au lieu de quinze. Voir `_local_cost`.
+    local_routing = True
+    # Pixels d'analyse ajoutes autour de la fenetre de routage : au-dela, les
+    # filtres de `build_cost_image` (Sato jusqu'a sigma 7, flou de 7) ne voient
+    # plus le bord du morceau.
+    LOCAL_MARGIN = 40
+
     def __init__(
         self,
         tiles: PyramidTileService,
@@ -552,14 +561,26 @@ class CrackDetector:
         self._route_cache: OrderedDict[int, ZoneRouteMap] = OrderedDict()
         self._cache_lock = RLock()
         self._analysis_lock = RLock()
+        self._read_lock = RLock()
         if model_path is AUTOMATIC_MODEL:
             model_path = default_model_path()
         self.model_artifact = load_detector_model(model_path) if model_path else None
 
+    def _read(self, x: int, y: int, width: int, height: int) -> np.ndarray:
+        """Lecture d'un rectangle ; une a la fois quand l'image n'est pas lue en direct.
+
+        Sans memmap, la lecture passe par une image Pillow partagee, qui ne
+        supporte pas deux lectures simultanees (trace local pendant la
+        preparation de la tuile).
+        """
+        source = self.tiles.source
+        if getattr(getattr(source, "source", source), "direct", False):    # _ReducedSource enveloppe l'image
+            return source.read(x, y, width, height)
+        with self._read_lock:
+            return source.read(x, y, width, height)
+
     def _read_reduced(self, zone: dict) -> tuple[np.ndarray, int]:
-        gray = self.tiles.source.read(
-            zone["x"], zone["y"], zone["width"], zone["height"]
-        )
+        gray = self._read(zone["x"], zone["y"], zone["width"], zone["height"])
         scale = max(1, int(ceil(max(gray.shape) / self.max_analysis_side)))
         if scale > 1:
             size = (ceil(gray.shape[1] / scale), ceil(gray.shape[0] / scale))
@@ -834,23 +855,57 @@ class CrackDetector:
         image.save(output, format="PNG", optimize=True)
         return output.getvalue()
 
+    def _reduced_grid(self, zone: dict) -> tuple[int, tuple[int, int]]:
+        """Facteur de reduction et taille de la tuile vue par l'analyse, comme `_read_reduced`."""
+        scale = max(1, int(ceil(max(zone["width"], zone["height"]) / self.max_analysis_side)))
+        return scale, (int(ceil(zone["height"] / scale)), int(ceil(zone["width"] / scale)))
+
+    def _local_cost(self, zone: dict, scale: int, shape, top: int, bottom: int, left: int,
+                    right: int) -> np.ndarray:
+        """Carte de cout d'une fenetre seulement, calculee sur un morceau un peu plus grand.
+
+        Memes filtres que pour la tuile entiere ; seule la normalisation par
+        percentiles porte sur le morceau au lieu de la tuile.
+        """
+        margin = self.LOCAL_MARGIN
+        ctop, cleft = max(0, top - margin), max(0, left - margin)
+        cbottom, cright = min(shape[0], bottom + margin), min(shape[1], right + margin)
+        width = min(zone["width"] - cleft * scale, (cright - cleft) * scale)
+        height = min(zone["height"] - ctop * scale, (cbottom - ctop) * scale)
+        gray = self._read(zone["x"] + cleft * scale, zone["y"] + ctop * scale, width, height)
+        if scale > 1:
+            gray = np.asarray(Image.fromarray(gray).resize(
+                (int(ceil(width / scale)), int(ceil(height / scale))), resample=Image.Resampling.BOX))
+        _, cost = base.build_cost_image(_local_normalize(gray))
+        return cost[top - ctop:bottom - ctop, left - cleft:right - cleft].astype(np.float32)
+
     def route(self, zone: dict, anchors: list[list[float]]) -> list[list[float]]:
         """Reroute et lisse chaque segment entre deux poignees.
 
         Le pathfinding et le lissage sont ceux du module historique. Chaque
         segment est lisse separement afin que tous les noeuds poses par
         l'utilisateur restent exactement a leur place.
+
+        La carte de cout de la tuile entiere sert des qu'elle est prete ; avant,
+        chaque segment calcule la sienne sur place (`_local_cost`) plutot que
+        d'attendre la fin de `prepare_route`.
         """
-        analysis = self.prepare_route(zone)
-        scale = analysis.scale
+        with self._cache_lock:
+            analysis = self._route_cache.get(int(zone["id"]))
+        if analysis is None and not self.local_routing:
+            analysis = self.prepare_route(zone)
+        if analysis is not None:
+            scale, shape = analysis.scale, analysis.cost.shape
+        else:
+            scale, shape = self._reduced_grid(zone)
         reduced = []
         for x, y in anchors:
             col = int(round((x - zone["x"]) / scale))
             row = int(round((y - zone["y"]) / scale))
             reduced.append(
                 (
-                    max(0, min(row, analysis.cost.shape[0] - 1)),
-                    max(0, min(col, analysis.cost.shape[1] - 1)),
+                    max(0, min(row, shape[0] - 1)),
+                    max(0, min(col, shape[1] - 1)),
                 )
             )
 
@@ -859,17 +914,19 @@ class CrackDetector:
         for segment_index, (start, end) in enumerate(zip(reduced, reduced[1:])):
             padding = 55
             top = max(0, min(start[0], end[0]) - padding)
-            bottom = min(analysis.cost.shape[0], max(start[0], end[0]) + padding + 1)
+            bottom = min(shape[0], max(start[0], end[0]) + padding + 1)
             left = max(0, min(start[1], end[1]) - padding)
-            right = min(analysis.cost.shape[1], max(start[1], end[1]) + padding + 1)
+            right = min(shape[1], max(start[1], end[1]) + padding + 1)
             local_start = (start[0] - top, start[1] - left)
             local_end = (end[0] - top, end[1] - left)
             if start == end:
                 segment = np.asarray([start, end], dtype=float)
             else:
+                window = (analysis.cost[top:bottom, left:right] if analysis is not None
+                          else self._local_cost(zone, scale, shape, top, bottom, left, right))
                 try:
                     path, _ = route_through_array(
-                        analysis.cost[top:bottom, left:right],
+                        window,
                         local_start,
                         local_end,
                         fully_connected=True,

@@ -42,7 +42,7 @@ tuiles de test.
 | **Édition** | annuler (Ctrl+Z), terminer le tracé (Échap), retirer le dernier point (Z), supprimer la fissure (Suppr) |
 | **Outils** | Sélection (V), Tracer (C), Ajouter des nœuds (I), Couper une fissure (X) |
 | **Classer** | les catégories, accepter la catégorie suggérée (Entrée) |
-| **Tuile** | précédente / suivante (Page préc. / suiv.), centrer (T), valider (Ctrl+Entrée), remettre « non validée » |
+| **Tuile** | précédente / suivante (Page préc. / suiv.), centrer (T), valider (Ctrl+Entrée), remettre « non validée », accepter tous les classements (Maj+Entrée), supprimer toutes les fissures (Ctrl+Suppr) |
 | **Automatique** | analyser la mosaïque, ouvrir le rapport, sondage ; réentraîner le colmatage ou le détecteur |
 | **Affichage** | tout voir, zoom, afficher les fissures (F), la grille (G), luminosité et contraste, calques du détecteur (diagnostic), le panneau |
 | **Mesures** | bilan des longueurs (Ctrl+B) et figures (Ctrl+Maj+B), exports CSV, PNG, SVG, PDF |
@@ -160,7 +160,9 @@ commence à fusionner des fissures parallèles distinctes).
 supprimer avant d'en refaire une.
 
 Il n'y a volontairement **pas de compteur de fissures** : compter suppose de
-décider ce qui relie deux tracés (jonction, croisement, proximité)
+décider ce qui relie deux tracés (jonction, croisement, proximité), ce qui
+n'est pas vérifiable à l'œil. Un chiffre invérifiable est pire que pas de
+chiffre.
 
 ## Conservation
 

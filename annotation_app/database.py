@@ -607,6 +607,26 @@ class AnnotationDatabase:
                                    anchors, geometry, category, state, annotator)
         return self.get_crack(image_id, crack_id)
 
+    def set_cracks(self, image_id: str, changes, annotator: str | None) -> None:
+        """Categorie et etat de plusieurs fissures, en une transaction ; trace inchange.
+
+        `changes` : (identifiant, revision attendue, categorie, etat). Une fissure
+        modifiee entre-temps fait tout echouer (CrackConflict) : rien n'est ecrit.
+        """
+        for _, _, category, state in changes:
+            if category not in CRACK_CATEGORIES:
+                raise ValueError(f"Categorie inconnue : {category}")
+            if state not in CRACK_STATES:
+                raise ValueError(f"Etat inconnu : {state}")
+        with closing(self.connect()) as connection, connection:
+            for crack_id, revision, category, state in changes:
+                row = connection.execute("SELECT anchors_json, geometry_json FROM cracks WHERE id = ? AND image_id = ?",
+                                         (crack_id, image_id)).fetchone()
+                if row is None:
+                    raise KeyError(crack_id)
+                self._update_crack_row(connection, image_id, crack_id, revision, json.loads(row["anchors_json"]),
+                                       json.loads(row["geometry_json"]), category, state, annotator)
+
     def replace_proposals(self, image_id: str, zone_ids, cracks: list[dict],
                           annotator: str | None) -> tuple[int, int]:
         """Remplace les propositions jamais verifiees (detecteur, analyse) des tuiles donnees.
