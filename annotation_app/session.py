@@ -30,7 +30,7 @@ from . import bases
 from .automatisation import Automation
 from .backup import backup_database, start_periodic_backup
 from .database import AnnotationDatabase, CRACK_CATEGORIES, CRACK_STATES, ZONE_STATUSES
-from .echelle import make_detector, pixel_size_um, resolution_factor, zone_size
+from .echelle import make_detector, pixel_size_info, resolution_factor, zone_size
 from .paths import DATA_DIR, LAST_IMAGE_FILE, remember_image
 from .tile_service import PyramidTileService
 
@@ -50,7 +50,8 @@ class Session:
             raise SessionError(f"Mosaique introuvable : {self.image_path}")
         self.cache_dir = Path(os.environ.get("CRACK_CACHE_DIR") or self.data_dir / "analysis_cache").resolve()
         self.tiles = PyramidTileService(self.image_path)
-        self.pixel_um = pixel_size_um(self.image_path)
+        # Metadonnees, sinon valeur saisie a l'ouverture (la fenetre la demande avant).
+        self.pixel_um, self.pixel_source = pixel_size_info(self.image_path, self.data_dir)
         self.factor = resolution_factor(self.pixel_um)
 
         self.image_id = image_id or os.environ.get("CRACK_IMAGE_ID")
@@ -101,7 +102,7 @@ class Session:
             tidy(self.data_dir, self.cache_dir,
                  Path(os.environ.get("CRACK_ANALYSE_DIR") or self.data_dir / "analyse"), default_model_path(), log)
 
-        self.detector, _ = make_detector(self.tiles, zone_size=self.zone_size)
+        self.detector, _ = make_detector(self.tiles, zone_size=self.zone_size, pixel_um=self.pixel_um)
         self._layers = None
         self.automation = Automation(self.database, self.image_id, self.tiles.source, self.pixel_um,
                                      self._proposals_for,
@@ -118,7 +119,9 @@ class Session:
         return self.tiles.height
 
     def describe(self) -> str:
-        scale = f"pixel {self.pixel_um:.3g} um" if self.pixel_um else "pixel inconnu"
+        scale = f"pixel {self.pixel_um:.4g} µm" if self.pixel_um else "pixel inconnu (longueurs en px)"
+        if self.pixel_source == "saisie":
+            scale += " (saisi)"
         return (f"{self.image_path.name} · {self.width:,} × {self.height:,} px · {scale} · "
                 f"tuiles de {self.zone_size} px").replace(",", " ")
 

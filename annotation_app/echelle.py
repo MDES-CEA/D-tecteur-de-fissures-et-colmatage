@@ -40,16 +40,127 @@ ANALYSIS_CHOICES_UM = (REFERENCE_ANALYSIS_UM, REFERENCE_PIXEL_UM)   # 3,2 et 1,6
 TOLERANCE = 0.15
 
 
-def pixel_size_um(path: Path) -> float | None:
-    """Taille du pixel d'une image, en micrometres, si le fichier la donne.
+class UnknownPixelSize(RuntimeError):
+    """Ni les metadonnees ni l'annotateur ne donnent la taille du pixel."""
 
-    Dans l'ordre : `CRACK_PIXEL_UM` pour forcer une valeur, la description
-    ecrite par `assembler_mosaique.py`, les metadonnees Zeiss d'une tuile
-    brute, puis la resolution TIFF si elle a une unite.
+
+def pixel_size_info(path: Path, data_dir: Path | None = None) -> tuple[float | None, str | None]:
+    """(taille du pixel en um, origine), origine parmi "forcee", "metadonnees", "saisie".
+
+    Dans l'ordre : `CRACK_PIXEL_UM` pour forcer une valeur, les metadonnees du
+    fichier (voir `metadata_pixel_size_um`), puis la valeur saisie par
+    l'annotateur pour cette image (voir `record_pixel_size_um`).
     """
     forced = os.environ.get("CRACK_PIXEL_UM")
     if forced:
-        return float(forced)
+        return float(forced.replace(",", ".")), "forcee"
+    value = metadata_pixel_size_um(path)
+    if value:
+        return value, "metadonnees"
+    value = recorded_pixel_size_um(path, data_dir)
+    if value:
+        return value, "saisie"
+    return None, None
+
+
+def pixel_size_um(path: Path, data_dir: Path | None = None) -> float | None:
+    """Taille du pixel d'une image, en micrometres, si on la connait (voir `pixel_size_info`)."""
+    return pixel_size_info(path, data_dir)[0]
+
+
+def require_pixel_size_um(path: Path, data_dir: Path | None = None) -> float:
+    """Taille du pixel, indispensable : longueurs en um, fenetres du colmatage, masque."""
+    value = pixel_size_um(path, data_dir)
+    if not value:
+        raise UnknownPixelSize(
+            f"Taille du pixel inconnue pour {Path(path).name} : pas de metadonnees, et aucune "
+            f"valeur saisie. L'ouvrir dans l'application, qui la demande, ou definir CRACK_PIXEL_UM.")
+    return value
+
+
+# -- Valeur saisie par l'annotateur -----------------------------------------------------
+# Une image sans metadonnees : la taille du pixel saisie a l'ouverture est
+# gardee dans `data/taille_pixel.json`, propre au poste comme les bases. Une
+# image y est reconnue par son chemin, ou, deplacee, par son nom ; dans les
+# deux cas la taille du fichier doit etre la meme, sinon c'est une autre image.
+
+PIXEL_RECORD_NAME = "taille_pixel.json"
+PIXEL_UM_RANGE = (0.001, 1000.0)       # du nanometre au millimetre : au-dela, une faute de frappe
+
+
+def pixel_record_file(data_dir: Path | None = None) -> Path:
+    from .paths import DATA_DIR
+    return (Path(data_dir) if data_dir is not None else DATA_DIR) / PIXEL_RECORD_NAME
+
+
+def _records(file: Path) -> list[dict]:
+    try:
+        data = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    images = data.get("images") if isinstance(data, dict) else None
+    return [r for r in images if isinstance(r, dict)] if isinstance(images, list) else []
+
+
+def _file_size(path: Path) -> int | None:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
+
+
+def _same(first, second) -> bool:
+    return os.path.normcase(str(first)) == os.path.normcase(str(second))
+
+
+def recorded_pixel_size_um(path: Path, data_dir: Path | None = None) -> float | None:
+    """Taille du pixel saisie pour cette image, s'il y en a une."""
+    resolved = Path(path).resolve()
+    size = _file_size(resolved)
+    if size is None:
+        return None
+    records = [r for r in _records(pixel_record_file(data_dir)) if r.get("size") == size]
+    found = next((r for r in records if _same(r.get("path", ""), resolved)), None)
+    if found is None:
+        moved = [r for r in records if _same(Path(str(r.get("path", ""))).name, resolved.name)]
+        found = moved[0] if len(moved) == 1 else None
+    try:
+        value = float(found["pixel_um"]) if found else None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return value if value and PIXEL_UM_RANGE[0] <= value <= PIXEL_UM_RANGE[1] else None
+
+
+def parse_pixel_size(text: str) -> float:
+    """Valeur tapee par l'annotateur, en um ; virgule ou point. ValueError si invalide."""
+    value = float(str(text).strip().replace(",", ".").replace(" ", ""))
+    if not PIXEL_UM_RANGE[0] <= value <= PIXEL_UM_RANGE[1]:
+        raise ValueError(f"{text} um : hors de l'intervalle {PIXEL_UM_RANGE[0]:g}-{PIXEL_UM_RANGE[1]:g} um")
+    return value
+
+
+def record_pixel_size_um(path: Path, value: float, data_dir: Path | None = None) -> Path:
+    """Garde la taille du pixel saisie pour cette image (remplace une saisie precedente)."""
+    if not PIXEL_UM_RANGE[0] <= float(value) <= PIXEL_UM_RANGE[1]:
+        raise ValueError(f"Taille de pixel invalide : {value} um")
+    resolved = Path(path).resolve()
+    file = pixel_record_file(data_dir)
+    records = [r for r in _records(file) if not _same(r.get("path", ""), resolved)]
+    records.append({"path": str(resolved), "size": _file_size(resolved), "pixel_um": float(value)})
+    file.parent.mkdir(parents=True, exist_ok=True)
+    temporary = file.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"images": records}, indent=1, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, file)
+    return file
+
+
+def metadata_pixel_size_um(path: Path) -> float | None:
+    """Taille du pixel d'une image, en micrometres, si le fichier la donne.
+
+    Dans l'ordre : la description ecrite par `assembler_mosaique.py`, les
+    metadonnees Zeiss d'une tuile brute, puis la resolution TIFF si elle a une
+    unite.
+    """
     try:
         with tifffile.TiffFile(path) as tif:
             page = tif.pages[0]
@@ -184,10 +295,12 @@ def analysis_side(zone_size: int, factor: float, analysis_um: float) -> int:
     return max(64, int(np.ceil((reference_zone + 2) / reduction)))
 
 
-def make_detector(tiles, zone_size: int | None = None, analysis_um: float | None = None, **options):
+def make_detector(tiles, zone_size: int | None = None, analysis_um: float | None = None,
+                  pixel_um: float | None = None, **options):
     """Le detecteur adapte a l'echelle de l'image, et son facteur.
 
     `zone_size` : cote des zones de l'image, en pixels de l'image.
+    `pixel_um` : taille du pixel deja connue (sinon lue par `pixel_size_um`).
     `analysis_um` : resolution d'analyse voulue ; par defaut celle que declare
     le modele, sinon celle du detecteur d'origine (3,2 um) pour une image plus
     fine que la reference. Une mosaique a la resolution de reference, avec un
@@ -195,7 +308,7 @@ def make_detector(tiles, zone_size: int | None = None, analysis_um: float | None
     """
     from .detection_service import CrackDetector
 
-    factor = resolution_factor(pixel_size_um(tiles.image_path))
+    factor = resolution_factor(pixel_um if pixel_um is not None else pixel_size_um(tiles.image_path))
     detector = CrackDetector(tiles, **options) if factor == 1.0 else ScaledDetector(tiles, factor, **options)
     declared = (detector.model_artifact or {}).get("analysis_um")
     chosen = analysis_um or declared
