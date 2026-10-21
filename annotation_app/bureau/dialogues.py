@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -37,6 +38,47 @@ from PySide6.QtWidgets import (
 )
 
 from ..paths import DATA_DIR, PROJECT_DIR
+
+def ask_pixel_size(parent, image_path: Path, current: float | None = None) -> float | None:
+    """Taille du pixel tapee par l'annotateur, en um ; None s'il renonce."""
+    from ..echelle import parse_pixel_size
+
+    text = f"{current:g}".replace(".", ",") if current else ""
+    message = (f"Aucune taille de pixel dans les métadonnées de\n{Path(image_path).name}.\n\n"
+               f"Taille du pixel (µm), lue sur le microscope ou la barre d'échelle :")
+    while True:
+        text, ok = QInputDialog.getText(parent, "Taille du pixel", message, QLineEdit.EchoMode.Normal, text)
+        if not ok:
+            return None
+        try:
+            return parse_pixel_size(text)
+        except ValueError:
+            QMessageBox.warning(parent, "Taille du pixel",
+                                f"« {text} » n'est pas une taille de pixel valable : un nombre de µm, "
+                                f"par exemple 1,595.")
+
+
+def ensure_pixel_size(parent, image_path: Path) -> float | None:
+    """Avant d'ouvrir une image : demande et garde la taille du pixel si rien ne la donne.
+
+    Sans elle, longueurs en px et pas de classement du colmatage ; l'annotateur
+    peut renoncer et la saisir plus tard (Fichier > Taille du pixel).
+    """
+    from ..echelle import pixel_size_um, record_pixel_size_um
+
+    known = pixel_size_um(image_path)
+    if known:
+        return known
+    value = ask_pixel_size(parent, image_path)
+    if value is None:
+        return None
+    try:
+        record_pixel_size_um(image_path, value)
+    except OSError as error:
+        QMessageBox.warning(parent, "Taille du pixel",
+                            f"Valeur non enregistrée ({error}) : l'image s'ouvre sans taille de pixel.")
+    return value
+
 
 # Ne jamais nommer une methode comme un signal de la classe (`finished` pour
 # un QDialog) : PySide6 n'appellerait jamais la methode branchee sous ce nom.

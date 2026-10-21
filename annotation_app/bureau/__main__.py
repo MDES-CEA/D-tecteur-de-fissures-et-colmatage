@@ -59,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
         if image is None:
             return 0
 
+    from .dialogues import ensure_pixel_size
+    ensure_pixel_size(None, Path(image))
+
     background = QPixmap(520, 90)
     background.fill(QColor(45, 45, 45))
     splash = QSplashScreen(background)

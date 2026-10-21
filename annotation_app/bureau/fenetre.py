@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from ..session import Session, SessionError
 from .calques import BINARY, HELP, LAYERS, colorize, reduce
 from .dialogues import (LABELS, AuditDialog, LevelsDialog, MeasuresDialog, ProcessDialog, ShortcutsDialog,
-                        TrainingDialog)
+                        TrainingDialog, ask_pixel_size, ensure_pixel_size)
 from .vue import MosaicView
 
 OVERVIEW_SIDE = 256        # cote maximal d'un calque de tuile vu en ensemble
@@ -136,6 +136,8 @@ class MainWindow(QMainWindow):
         a = self._action
         self.act_open = a("Ouvrir une mosaïque…", self.choose_mosaic, "Ctrl+O")
         self.act_annotator = a("Nom de l'annotateur…", self.ask_annotator)
+        self.act_pixel = a("Taille du pixel…", self.change_pixel_size,
+                           tip="Pour une image sans métadonnées : longueurs en µm et classement du colmatage")
         self.act_export_base = a("Exporter la base de cette mosaïque…", self.export_base,
                                  tip="Un fichier .sqlite3 à donner tel quel")
         self.act_import_base = a("Importer une base…", self.import_base)
@@ -211,7 +213,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         bar = self.menuBar()
         menu = bar.addMenu("&Fichier")
-        menu.addActions([self.act_open, self.act_annotator])
+        menu.addActions([self.act_open, self.act_annotator, self.act_pixel])
         menu.addSeparator()
         menu.addActions([self.act_export_base, self.act_import_base])
         menu.addSeparator()
@@ -449,6 +451,7 @@ class MainWindow(QMainWindow):
             return
         # Une base forcee suit la fenetre ; sinon chaque mosaique a la sienne.
         forced = self.session.database_path if self.session and self.session.database_forced else None
+        ensure_pixel_size(self, Path(path))
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             session = Session(Path(path), forced, log=self.status)
@@ -458,6 +461,37 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
         self.open_session(session)
+
+    def change_pixel_size(self) -> None:
+        """Saisit ou corrige la taille du pixel d'une image sans metadonnees, puis la rouvre."""
+        from ..echelle import record_pixel_size_um
+
+        session = self.session
+        if session.pixel_source in ("metadonnees", "forcee"):
+            origin = "des métadonnées de l'image" if session.pixel_source == "metadonnees" else "de CRACK_PIXEL_UM"
+            QMessageBox.information(self, "Taille du pixel",
+                                    f"Pixel de {session.pixel_um:.4g} µm, lu {origin} : il ne se modifie pas ici.")
+            return
+        value = ask_pixel_size(self, session.image_path, session.pixel_um)
+        if value is None or value == session.pixel_um:
+            return
+        try:
+            record_pixel_size_um(session.image_path, value, session.data_dir)
+        except OSError as error:
+            QMessageBox.critical(self, "Taille du pixel", f"Valeur non enregistrée : {error}")
+            return
+        # Detecteur, modele de colmatage et mesures dependent du pixel : on rouvre.
+        forced = session.database_path if session.database_forced else None
+        self.edits.waitForDone(10000)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            reopened = Session(session.image_path, forced, log=self.status, data_dir=session.data_dir)
+        except SessionError as error:
+            QMessageBox.critical(self, "Ouverture impossible", str(error))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.open_session(reopened)
 
     def export_base(self) -> None:
         """Copie coherente de la base de cette mosaique, a donner telle quelle."""
