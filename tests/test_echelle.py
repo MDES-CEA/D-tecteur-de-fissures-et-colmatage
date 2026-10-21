@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -13,9 +14,15 @@ from annotation_app.echelle import (
     REFERENCE_ANALYSIS_UM,
     REFERENCE_PIXEL_UM,
     ScaledDetector,
+    UnknownPixelSize,
     analysis_side,
     make_detector,
+    parse_pixel_size,
+    pixel_record_file,
+    pixel_size_info,
     pixel_size_um,
+    record_pixel_size_um,
+    require_pixel_size_um,
     resolution_factor,
     zone_size,
 )
@@ -83,6 +90,87 @@ class ScaleTests(unittest.TestCase):
             detector, factor = make_detector(SimpleNamespace(image_path=plain, source=None))
             self.assertIsInstance(detector, CrackDetector)
             self.assertEqual(factor, 1.0)
+
+
+class PixelSizeEntryTests(unittest.TestCase):
+    """Image sans metadonnees : la taille du pixel saisie par l'annotateur."""
+
+    def setUp(self):
+        self.folder = TemporaryDirectory()
+        self.root = Path(self.folder.name)
+        self.data = self.root / "data"
+        self.forced = os.environ.pop("CRACK_PIXEL_UM", None)
+
+    def tearDown(self):
+        import gc
+        if self.forced is not None:
+            os.environ["CRACK_PIXEL_UM"] = self.forced
+        gc.collect()
+        self.folder.cleanup()
+
+    def plain(self, name="sans_echelle.tif", side=8):
+        path = self.root / "MEB" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tifffile.imwrite(path, np.zeros((side, side), np.uint8))
+        return path
+
+    def test_a_typed_pixel_size_is_kept_for_this_image(self):
+        image = self.plain()
+        self.assertEqual(pixel_size_info(image, self.data), (None, None))
+        with self.assertRaises(UnknownPixelSize):
+            require_pixel_size_um(image, self.data)
+        record_pixel_size_um(image, 0.75, self.data)
+        self.assertEqual(pixel_size_info(image, self.data), (0.75, "saisie"))
+        self.assertEqual(require_pixel_size_um(image, self.data), 0.75)
+        record_pixel_size_um(image, 0.8, self.data)              # correction : remplace
+        self.assertEqual(pixel_size_um(image, self.data), 0.8)
+        self.assertEqual(len(json.loads(pixel_record_file(self.data).read_text("utf-8"))["images"]), 1)
+
+    def test_the_metadata_win_over_a_typed_value(self):
+        image = self.root / "mosaique.tif"
+        tifffile.imwrite(image, np.zeros((8, 8), np.uint8), description=json.dumps({"pixel_nm": 371.2}))
+        record_pixel_size_um(image, 5.0, self.data)
+        value, origin = pixel_size_info(image, self.data)
+        self.assertAlmostEqual(value, 0.3712)
+        self.assertEqual(origin, "metadonnees")
+
+    def test_a_moved_image_keeps_its_value_but_another_image_does_not(self):
+        image = self.plain()
+        record_pixel_size_um(image, 0.75, self.data)
+        moved = self.root / "ailleurs" / image.name
+        moved.parent.mkdir()
+        image.rename(moved)
+        self.assertEqual(pixel_size_um(moved, self.data), 0.75)
+        replaced = self.plain(side=16)                           # meme chemin, autre image
+        self.assertIsNone(pixel_size_um(replaced, self.data))
+
+    def test_typed_values(self):
+        self.assertEqual(parse_pixel_size(" 1,595 "), 1.595)
+        self.assertEqual(parse_pixel_size("0.3712"), 0.3712)
+        for text in ("", "abc", "0", "-1", "5000"):
+            with self.assertRaises(ValueError, msg=text):
+                parse_pixel_size(text)
+
+    def test_the_session_and_the_analysis_use_the_typed_value(self):
+        from annotation_app.session import Session
+        from analyse.__main__ import main
+
+        image = self.plain(side=1024)
+        session = Session(image, log=lambda text: None, data_dir=self.data)
+        self.assertIsNone(session.pixel_um)
+        database = session.database_path
+        session.close()
+        with self.assertRaises(SystemExit) as raised:
+            main(["--database", str(database), "--image", str(image), "preparer"])
+        self.assertIn("Taille du pixel inconnue", str(raised.exception))
+
+        record_pixel_size_um(image, 0.3712, self.data)
+        session = Session(image, log=lambda text: None, data_dir=self.data)
+        self.assertEqual((session.pixel_um, session.pixel_source), (0.3712, "saisie"))
+        self.assertAlmostEqual(session.factor, REFERENCE_PIXEL_UM / 0.3712)
+        self.assertIsInstance(session.detector, ScaledDetector)
+        self.assertIn("(saisi)", session.describe())
+        session.close()
 
 
 class ScaledDetectorTests(unittest.TestCase):
