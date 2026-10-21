@@ -191,14 +191,14 @@ def baseline_probabilities(annotations, split, data, source, pixel_um, log=print
 def run(database: Path, image_path: Path | None = None, epochs: int = 18, log=print,
         retrain: bool = True) -> dict:
     """`retrain=False` : reprend le reseau enregistre ; ne refait que le reglage et la mesure."""
-    from annotation_app.echelle import pixel_size_um
+    from annotation_app.echelle import require_pixel_size_um
     from annotation_app.paths import MODELS_DIR
     from colmatage.modele import portions_from_windows
     from crop_roi import LargeGrayImage
 
     annotations = donnees.load(database, image_path)
     split = donnees.split_for(annotations)
-    pixel_um = pixel_size_um(annotations.image_path)
+    pixel_um = require_pixel_size_um(annotations.image_path)
     source = LargeGrayImage(annotations.image_path)
     log("Fenetres le long des fissures validees...")
     data = build_windows(annotations, split, source, pixel_um, log)

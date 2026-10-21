@@ -143,7 +143,7 @@ def run(database: Path, image_path: Path | None = None, log=print, cancelled=lam
     `detector_path` : un detecteur candidat, au lieu de celui en service.
     `redo` : repartir de zero, detection comprise."""
     from annotation_app.detector_model import default_model_path
-    from annotation_app.echelle import make_detector, pixel_size_um
+    from annotation_app.echelle import make_detector, require_pixel_size_um
     from annotation_app.paths import MODELS_DIR
     from annotation_app.tile_service import PyramidTileService
     from crop_roi import LargeGrayImage
@@ -154,7 +154,7 @@ def run(database: Path, image_path: Path | None = None, log=print, cancelled=lam
     annotations = donnees.load(database, image_path)
     out = annotations.output_dir()
     out.mkdir(parents=True, exist_ok=True)
-    pixel_um = pixel_size_um(annotations.image_path)
+    pixel_um = require_pixel_size_um(annotations.image_path)
     source = LargeGrayImage(annotations.image_path)
     mask = SampleMask.load_or_compute(annotations.image_path, source, pixel_um, out)
     model_path = MODELS_DIR / MODEL_PATH_NAME

@@ -256,7 +256,7 @@ def build(result: dict, annotations, source, mask, out_path: Path, current: dict
 
 def build_for(annotations, result=None) -> Path:
     """Rapport du dernier resultat, avec vos corrections s'il a ete importe."""
-    from annotation_app.echelle import pixel_size_um
+    from annotation_app.echelle import require_pixel_size_um
     from annotation_app.paths import MODELS_DIR
     from crop_roi import LargeGrayImage
 
@@ -268,7 +268,7 @@ def build_for(annotations, result=None) -> Path:
     result = result or chaine.load_result(annotations)
     out = annotations.output_dir()
     source = LargeGrayImage(annotations.image_path)
-    mask = SampleMask.load_or_compute(annotations.image_path, source, pixel_size_um(annotations.image_path), out)
+    mask = SampleMask.load_or_compute(annotations.image_path, source, require_pixel_size_um(annotations.image_path), out)
     current = current_state(annotations, mask, result["pixel_um"])
     model_pixel_um = (result.get("colmatage") or {}).get("pixel_um")
     if model_pixel_um is None:               # resultat d'avant l'enregistrement de ce pixel

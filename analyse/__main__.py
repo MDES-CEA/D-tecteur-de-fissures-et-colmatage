@@ -23,7 +23,7 @@ def prepare(args) -> None:
     import numpy as np
     from PIL import Image, ImageDraw
 
-    from annotation_app.echelle import pixel_size_um
+    from annotation_app.echelle import require_pixel_size_um
     from crop_roi import LargeGrayImage
 
     from . import donnees
@@ -36,7 +36,7 @@ def prepare(args) -> None:
     print(f"Mosaique {annotations.image_id} : {len(annotations.zones)} tuiles, "
           f"{len(annotations.done_ids)} validees")
     print(f"Lignes de test {split['lignes_test']}, de validation {split['lignes_validation']}")
-    pixel_um = pixel_size_um(annotations.image_path)
+    pixel_um = require_pixel_size_um(annotations.image_path)
     for name, zones in roles.items():
         ids = {z["id"] for z in zones}
         length = sum(donnees.polyline_length(c["geometry"]) for c in annotations.validated
@@ -127,7 +127,7 @@ def report(args) -> None:
 
 def evaluate(args) -> None:
     """Le dernier resultat complet, contre l'annotateur, sur les tuiles de test."""
-    from annotation_app.echelle import pixel_size_um
+    from annotation_app.echelle import require_pixel_size_um
 
     from . import chaine, donnees
     from .evaluation import end_to_end
@@ -138,7 +138,7 @@ def evaluate(args) -> None:
     if result is None:
         raise SystemExit("Pas encore de resultat : lancer « python -m analyse analyser ».")
     split = donnees.split_for(annotations)
-    s = end_to_end(annotations, split, result, pixel_size_um(annotations.image_path))
+    s = end_to_end(annotations, split, result, require_pixel_size_um(annotations.image_path))
     out = annotations.output_dir() / "evaluation_test.json"
     if not s["tuiles"]:
         # Une mesure d'avant (annotations supprimees depuis) ne doit plus passer pour celle-ci.
@@ -166,7 +166,7 @@ def evaluate(args) -> None:
     if not test_only:
         # La correction, mesuree sur le test, est controlee sur d'autres tuiles : la validation.
         from .evaluation import corrected
-        v = end_to_end(annotations, split, result, pixel_size_um(annotations.image_path), role_name="validation")
+        v = end_to_end(annotations, split, result, require_pixel_size_um(annotations.image_path), role_name="validation")
         fixed = corrected(v["longueur_auto_par_etat_mm"], s["ratios"])
         s["controle_validation"] = {"tuiles": v["tuiles"], "part_colmatee_humaine": v["part_colmatee_humaine"],
                                     "part_colmatee_auto": v["part_colmatee_auto"],
@@ -226,8 +226,12 @@ def main(argv=None) -> None:
     commands.add_parser("importer", help="reimporte le dernier resultat en propositions, sans recalcul")
     args = parser.parse_args(argv)
     args.database, args.image = tool_database(args.database, args.image)
-    {"preparer": prepare, "colmatage": colmatage, "analyser": analyse_mosaic,
-     "evaluer": evaluate, "rapport": report, "importer": import_again}[args.command](args)
+    from annotation_app.echelle import UnknownPixelSize
+    try:
+        {"preparer": prepare, "colmatage": colmatage, "analyser": analyse_mosaic,
+         "evaluer": evaluate, "rapport": report, "importer": import_again}[args.command](args)
+    except UnknownPixelSize as error:
+        raise SystemExit(str(error)) from error
 
 
 if __name__ == "__main__":
